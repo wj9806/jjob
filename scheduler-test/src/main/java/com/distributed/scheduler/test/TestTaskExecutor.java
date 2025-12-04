@@ -17,7 +17,7 @@ public class TestTaskExecutor implements TaskExecutor {
 
     @Override
     public Object execute(TaskInfo taskInfo) throws Exception {
-        System.out.println("[" + new Date() + "] 执行测试任务: " + taskInfo.getTaskId());
+        log.info("[{}] 执行测试任务: {}", new Date(), taskInfo.getTaskId());
 
         // 模拟任务执行
         try {
@@ -28,7 +28,7 @@ public class TestTaskExecutor implements TaskExecutor {
         }
         
         String result = "任务执行成功，时间: " + new Date();
-        System.out.println("[" + new Date() + "] " + result);
+        log.info("[{}] {}", new Date(), result);
         return result;
     }
 
@@ -45,10 +45,25 @@ public class TestTaskExecutor implements TaskExecutor {
 
     @Override
     public String getCronExpression() {
-        return "";
+        return "*/10 * * * * ?";
+    }
+
+    @Override
+    public boolean isSingleton() {
+        return false;
+    }
+
+    @Override
+    public void init() throws Exception {
+        log.info("初始化测试任务执行器");
+    }
+
+    @Override
+    public void destroy() throws Exception {
+        log.info("销毁测试任务执行器");
     }
 
     public TestTaskExecutor() {
-        System.out.println("创建测试任务执行器");
+        log.info("创建测试任务执行器");
     }
 }

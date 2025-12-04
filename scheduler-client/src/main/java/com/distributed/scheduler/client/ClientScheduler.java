@@ -21,8 +21,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
+import java.net.Inet4Address;
+import java.net.NetworkInterface;
 import java.net.UnknownHostException;
+import java.util.Enumeration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -32,10 +36,14 @@ public class ClientScheduler {
     private ClientInfo clientInfo;
     private Channel serverChannel;
     private final NioEventLoopGroup group = new NioEventLoopGroup(1);
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-    private final ScheduledExecutorService heartbeatScheduler = Executors.newSingleThreadScheduledExecutor();
+
+    // 重连机制的定时任务
+    private final ScheduledExecutorService reconnectScheduler;
+    // 心跳机制的定时任务
+    private final ScheduledExecutorService heartbeatScheduler;
     // 任务执行线程池，用于并行执行任务
-    private ThreadPoolExecutor taskExecutorService;
+    private final ThreadPoolExecutor taskExecutorService;
+
     private boolean started = false;
     private final TaskRegistry taskRegistry = new TaskRegistry();
     private boolean initialized = false; // 标记是否已调用init方法
@@ -46,8 +54,8 @@ public class ClientScheduler {
     private String applicationName;
     
     // 线程池默认配置参数
-    private static final int CORE_POOL_SIZE = Runtime.getRuntime().availableProcessors() * 2;
-    private static final int MAX_POOL_SIZE = Runtime.getRuntime().availableProcessors() * 4;
+    private static final int CORE_POOL_SIZE = Runtime.getRuntime().availableProcessors();
+    private static final int MAX_POOL_SIZE = Runtime.getRuntime().availableProcessors() * 2;
     private static final int QUEUE_CAPACITY = 100;
     private static final long KEEP_ALIVE_TIME = 60L;
     
@@ -58,6 +66,16 @@ public class ClientScheduler {
         // 默认构造函数
         // 初始化任务执行线程池
         this.taskExecutorService = createTaskExecutorService();
+        this.heartbeatScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r);
+            thread.setName("Heartbeat-Thread");
+            return thread;
+        });
+        this.reconnectScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r);
+            thread.setName("Reconnect-Thread");
+            return thread;
+        });
     }
     
     /**
@@ -78,7 +96,7 @@ public class ClientScheduler {
             // 初始化客户端信息
             InetAddress localHost = InetAddress.getLocalHost();
             String hostName = localHost.getHostName();
-            String ipAddress = localHost.getHostAddress();
+            String ipAddress = getLocalIpAddress();
             
             // 使用正确的构造函数
             this.clientInfo = new ClientInfo(hostName, 0, clientGroup, applicationName);
@@ -166,7 +184,7 @@ public class ClientScheduler {
      */
     private void startReconnectTask(Bootstrap bootstrap) {
         logger.debug("Starting reconnect task");
-        scheduler.scheduleAtFixedRate(() -> {
+        reconnectScheduler.scheduleAtFixedRate(() -> {
             try {
                 if (started && (serverChannel == null || !serverChannel.isActive())) {
                     logger.info("Trying to reconnect to server: {}:{}", serverHost, serverPort);
@@ -266,34 +284,14 @@ public class ClientScheduler {
     /**
      * 注册任务执行器
      */
-    public void registerTask(TaskExecutor executor) throws Exception {
-        if (executor == null) {
-            throw new IllegalArgumentException("Task executor cannot be null");
+    public void registerTask(Class<? extends TaskExecutor> executorClass) throws Exception {
+        if (executorClass == null) {
+            throw new IllegalArgumentException("Task executor class cannot be null");
         }
-        
-        // 验证任务名称不能为空
-        if (executor.getTaskName() == null || executor.getTaskName().trim().isEmpty()) {
-            throw new IllegalArgumentException("Task name cannot be null or empty");
-        }
-        
-        // 验证任务分组不能为空
-        if (executor.getTaskGroup() == null || executor.getTaskGroup().trim().isEmpty()) {
-            throw new IllegalArgumentException("Task group cannot be null or empty");
-        }
-        
-        TaskInfo taskInfo = new TaskInfo();
-        // 使用任务名称和分组的组合作为任务ID，确保不同实例上的同一任务生成相同的taskId
-        String taskId = executor.getTaskName() + "_" + executor.getTaskGroup();
-        taskInfo.setTaskId(taskId);
-        taskInfo.setTaskName(executor.getTaskName());
-        taskInfo.setTaskGroup(executor.getTaskGroup());
-        taskInfo.setOneRunning(false);
-        taskInfo.setCronExpression(executor.getCronExpression());
-        taskInfo.setEnabled(true);
-        
-        taskRegistry.registerTask(executor);
-        logger.info("Task registered locally: {}", executor.getTaskName());
-        
+
+        // 注册任务到本地
+        TaskInfo taskInfo = taskRegistry.registerTask(executorClass);
+
         // 如果已连接到服务器，立即注册到服务器
         if (serverChannel != null && serverChannel.isActive()) {
             Message message = new Message();
@@ -344,7 +342,7 @@ public class ClientScheduler {
             group.shutdownGracefully();
             
             // 关闭调度器
-            scheduler.shutdown();
+            reconnectScheduler.shutdown();
             heartbeatScheduler.shutdown();
             
             // 关闭任务执行线程池，使用超时等待确保任务完成
@@ -361,6 +359,19 @@ public class ClientScheduler {
                     logger.error("Interrupted while waiting for task executor service to terminate", e);
                     taskExecutorService.shutdownNow();
                     Thread.currentThread().interrupt();
+                }
+            }
+            
+            // 销毁所有已注册的任务执行器
+            logger.info("Destroying all registered task executors...");
+            for (Map.Entry<String, TaskExecutor> entry : taskRegistry.getAllTaskExecutors().entrySet()) {
+                String taskId = entry.getKey();
+                TaskExecutor executor = entry.getValue();
+                try {
+                    executor.destroy();
+                    logger.debug("Task executor destroyed during client shutdown: {}", taskId);
+                } catch (Exception e) {
+                    logger.error("Failed to destroy task executor during client shutdown: {}", taskId, e);
                 }
             }
             
@@ -389,7 +400,7 @@ public class ClientScheduler {
             
             @Override
             public Thread newThread(Runnable r) {
-                Thread thread = new Thread(r, "task-executor-" + counter.getAndIncrement());
+                Thread thread = new Thread(r, "jjob-executor-" + counter.getAndIncrement());
                 thread.setDaemon(false);
                 // 设置未捕获异常处理器
                 thread.setUncaughtExceptionHandler((t, e) -> {
@@ -424,10 +435,8 @@ public class ClientScheduler {
                 threadFactory,
                 rejectionHandler
         );
-        
-        // 允许核心线程超时回收，当系统负载低时减少资源占用
-        executor.allowCoreThreadTimeOut(true);
-        
+
+        executor.allowCoreThreadTimeOut(false);
         return executor;
     }
     
@@ -436,6 +445,48 @@ public class ClientScheduler {
      */
     public ThreadPoolExecutor getTaskExecutorService() {
         return taskExecutorService;
+    }
+    
+    /**
+     * 获取本地真实IP地址
+     * 避免返回127.0.0.1或localhost
+     * @return 本地真实IP地址
+     */
+    private String getLocalIpAddress() {
+        try {
+            // 获取所有网络接口
+            Enumeration<NetworkInterface> networkInterfaces = NetworkInterface.getNetworkInterfaces();
+            while (networkInterfaces.hasMoreElements()) {
+                NetworkInterface networkInterface = networkInterfaces.nextElement();
+                
+                // 跳过环回接口、虚拟接口和未运行的接口
+                if (networkInterface.isLoopback() || networkInterface.isVirtual() || !networkInterface.isUp()) {
+                    continue;
+                }
+                
+                // 获取接口的所有IP地址
+                Enumeration<InetAddress> inetAddresses = networkInterface.getInetAddresses();
+                while (inetAddresses.hasMoreElements()) {
+                    InetAddress inetAddress = inetAddresses.nextElement();
+                    
+                    // 跳过IPv6地址和环回地址
+                    if (inetAddress instanceof Inet4Address && !inetAddress.isLoopbackAddress()) {
+                        return inetAddress.getHostAddress();
+                    }
+                }
+            }
+            
+            // 如果没有找到合适的IP地址，回退到本地主机地址
+            return InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            logger.warn("Failed to get real local IP address, falling back to localhost: {}", e.getMessage());
+            try {
+                return InetAddress.getLocalHost().getHostAddress();
+            } catch (UnknownHostException ex) {
+                logger.error("Failed to get localhost address", ex);
+                return "127.0.0.1"; // 最后的回退
+            }
+        }
     }
     
     /**

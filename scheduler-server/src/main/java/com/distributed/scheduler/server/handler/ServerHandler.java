@@ -74,9 +74,11 @@ public class ServerHandler extends SimpleChannelInboundHandler<Message> {
         String clientId = clientInfo.getClientId();
         
         // 从连接中获取客户端IP地址
-        String clientIp = ctx.channel().remoteAddress().toString().split(":")[0].replace("/", "");
-        clientInfo.setIpAddress(clientIp);
-        
+        if (clientInfo.getIpAddress() == null) {
+            String clientIp = ctx.channel().remoteAddress().toString().split(":")[0].replace("/", "");
+            clientInfo.setIpAddress(clientIp);
+        }
+
         // 注册客户端
         clientManager.registerClient(channelId.asLongText(), clientInfo);
         // 使用clientId注册通道，而不是channelId

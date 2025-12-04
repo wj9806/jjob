@@ -7,6 +7,22 @@ import com.distributed.scheduler.client.model.TaskInfo;
  * 用户需要实现此接口来定义具体的任务执行逻辑
  */
 public interface TaskExecutor {
+
+    /**
+     * 初始化任务执行器
+     * @throws Exception 初始化过程中的异常
+     */
+    default void init() throws Exception {
+
+    }
+
+    /**
+     * 销毁任务执行器
+     * @throws Exception 销毁过程中的异常
+     */
+    default void destroy() throws Exception {
+
+    }
     
     /**
      * 执行任务
@@ -33,4 +49,12 @@ public interface TaskExecutor {
      * @return Cron表达式
      */
     String getCronExpression();
+    
+    /**
+     * 判断任务执行器是否为单例
+     * @return true表示单例，false表示非单例
+     */
+    default boolean isSingleton() {
+        return true;
+    }
 }

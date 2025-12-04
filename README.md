@@ -16,10 +16,12 @@
 
 ### 整体架构
 
-系统由两个核心模块组成：
+系统由三个核心模块组成：
 
-1. **server模块**：作为任务调度中心，负责接收客户端注册、管理任务调度、监控任务状态
-2. **client模块**：作为任务执行节点，注册到server并执行分配的任务
+1. **scheduler-server**：作为任务调度中心，负责接收客户端注册、管理任务调度、监控任务状态
+2. **scheduler-client**：作为任务执行节点，注册到server并执行分配的任务
+3. **scheduler-console**：Web控制台，基于Vue 3 + TypeScript + Vite开发，提供可视化界面查看客户端信息和任务状态
+4. **scheduler-test**：测试模块，用于系统功能测试
 
 ### 核心组件
 
@@ -43,6 +45,8 @@
 - JDK 1.8+
 - Maven 3.6+
 - Spring Boot 2.7.x
+- Node.js 16+
+- npm 8+
 
 ### 构建和启动
 
@@ -57,8 +61,7 @@ mvn clean package -DskipTests
 
 # 启动
 java -jar target/scheduler-server.jar
-# 或使用脚本
-start-server.bat
+
 ```
 
 #### 客户端
@@ -72,8 +75,26 @@ mvn clean package -DskipTests
 
 # 启动
 java -jar target/scheduler-client.jar
-# 或使用脚本
-start-client.bat
+
+```
+
+#### Web控制台
+
+```bash
+# 进入控制台目录
+cd scheduler-console
+
+# 安装依赖
+npm install
+
+# 开发环境启动
+npm run dev
+
+# 构建生产版本
+npm run build
+
+# 生产环境预览
+npm run preview
 ```
 
 ## 使用方法
@@ -124,13 +145,17 @@ try {
 
 ### 访问控制台
 
-启动服务端后，可以通过以下地址访问控制台：
+启动Web控制台后，可以通过以下地址访问（默认端口为5173，具体以启动日志为准）：
 
 ```
-http://localhost:8080/console.html
+http://localhost:5173
 ```
 
-控制台将显示所有已注册的客户端信息，包括客户端ID、应用名称、主机名、IP地址等。
+控制台功能包括：
+- 显示所有已注册的客户端信息（客户端ID、应用名称、主机名、IP地址等）
+- 实时监控客户端状态
+- 查看任务执行历史记录
+- 任务状态可视化展示
 
 ## API文档
 
@@ -167,7 +192,7 @@ GET /api/status
 
 1. 确保服务端和客户端的通信端口配置一致（默认为8888）
 2. 客户端需要正确实现TaskExecutor接口
-3. 服务端需要在8080端口启动，用于Web控制台访问
+3. 服务端需要在8488端口启动，用于Web控制台访问
 4. 客户端心跳超时时间为60秒，超过时间未收到心跳，服务端会将客户端标记为离线
 
 ## 故障排查
@@ -175,7 +200,3 @@ GET /api/status
 1. 客户端连接失败：检查网络连接和服务端是否正常启动
 2. 任务未执行：检查cron表达式是否正确，任务执行器是否正确注册
 3. 客户端离线：检查客户端心跳是否正常发送，网络连接是否稳定
-
-## 许可证
-
-MIT License

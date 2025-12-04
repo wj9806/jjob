@@ -11,7 +11,6 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.InvocationTargetException;
 import java.util.UUID;
 import java.util.Date;
 import java.util.concurrent.RejectedExecutionException;
@@ -134,9 +133,12 @@ public class ClientHandler extends SimpleChannelInboundHandler<Message> {
         
         long startTime = System.currentTimeMillis();
         
+        TaskExecutor executor = null;
+        boolean isSingleton = false;
+        
         try {
             // 使用TaskRegistry获取任务执行器
-            TaskExecutor executor = taskRegistry.getTaskExecutor(taskInfo.getTaskId());
+            executor = taskRegistry.getTaskExecutor(taskInfo.getTaskId());
             if (executor != null) {
                 logger.trace("Executing task using registered executor: {}", executor.getTaskName());
                 executor.execute(taskInfo);
@@ -144,6 +146,9 @@ public class ClientHandler extends SimpleChannelInboundHandler<Message> {
                 long executionTime = System.currentTimeMillis() - startTime;
                 logger.debug("Task executed successfully with registered executor: {}, Execution time: {}ms", 
                     taskName, executionTime);
+                
+                // 检查是否为单例（单例任务会被存储在taskExecutors中）
+                isSingleton = taskRegistry.containsTaskExecutor(executor);
             } else {
                 // 如果没有找到注册的执行器，使用反射执行
                 logger.debug("No registered executor found, using reflection for task: {}", taskName);
@@ -171,17 +176,6 @@ public class ClientHandler extends SimpleChannelInboundHandler<Message> {
                     long executionTime = System.currentTimeMillis() - startTime;
                     logger.debug("Task executed successfully with reflection: {}, Execution time: {}ms", 
                         taskName, executionTime);
-                } catch (ClassNotFoundException e) {
-                    logger.error("Target class not found: {}", taskInfo.getTargetClass(), e);
-                    throw new Exception("Failed to execute task: Target class not found - " + taskInfo.getTargetClass(), e);
-                } catch (NoSuchMethodException e) {
-                    logger.error("Target method not found: {}.{}", taskInfo.getTargetClass(), taskInfo.getTargetMethod(), e);
-                    throw new Exception("Failed to execute task: Method not found - " + taskInfo.getTargetMethod(), e);
-                } catch (InvocationTargetException e) {
-                    logger.error("Task execution error in target method: {}.{}", 
-                        taskInfo.getTargetClass(), taskInfo.getTargetMethod(), e.getTargetException());
-                    throw new Exception("Failed to execute task: " + (e.getTargetException() != null ? 
-                        e.getTargetException().getMessage() : "Unknown error"), e.getTargetException());
                 } catch (Exception e) {
                     logger.error("Reflection execution failed for task: {}", taskName, e);
                     throw new Exception("Failed to execute task using reflection: " + e.getMessage(), e);
@@ -190,6 +184,17 @@ public class ClientHandler extends SimpleChannelInboundHandler<Message> {
         } catch (Exception e) {
             logger.error("Error executing task: {}", taskName, e);
             throw e;
+        } finally {
+            // 对于非单例任务，执行完成后需要销毁
+            if (executor != null && !isSingleton) {
+                try {
+                    executor.destroy();
+                    logger.debug("Non-singleton task executor destroyed: {}", taskName);
+                } catch (Exception e) {
+                    logger.error("Failed to destroy non-singleton task executor: {}", taskName, e);
+                    // 销毁失败不影响任务执行结果，只记录日志
+                }
+            }
         }
     }
     

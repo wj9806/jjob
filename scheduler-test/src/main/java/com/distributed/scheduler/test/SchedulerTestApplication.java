@@ -39,8 +39,8 @@ public class SchedulerTestApplication {
             
             logger.info("正在初始化客户端，连接到服务器: " + serverHost + ":" + serverPort);
             clientScheduler.init(serverHost, serverPort, clientGroup, applicationName);
-            clientScheduler.registerTask(new TestTaskExecutor());
-            clientScheduler.registerTask(new TestTaskExecutorWithCron());
+            clientScheduler.registerTask(TestTaskExecutor.class);
+            //clientScheduler.registerTask(TestTaskExecutorWithCron.class);
             // 创建一个线程启动客户端
             Thread clientThread = new Thread(() -> {
                 try {
