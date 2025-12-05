@@ -26,12 +26,6 @@ public class SchedulerTestApplication {
         } catch (Exception e) {
             System.err.println("客户端启动失败: " + e.getMessage());
         }
-
-        // 保持应用运行
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            logger.info("正在关闭客户端...");
-            clientScheduler.stop();
-        }));
     }
 
 }

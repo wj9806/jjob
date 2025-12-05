@@ -147,9 +147,11 @@ public class ClientScheduler {
             
             started = true;
             logger.info("Client scheduler started");
+
+            // 保持应用运行
+            Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "ClientScheduler-Shutdown-Hook"));
         } catch (Exception e) {
             logger.error("Failed to start client: {}", e.getMessage());
-            e.printStackTrace();
         }
     }
     
