@@ -284,7 +284,7 @@ public class ClientScheduler {
     /**
      * 注册任务执行器
      */
-    public void registerTask(Class<? extends TaskExecutor> executorClass) throws Exception {
+    public void registerTask(Class<? extends TaskExecutor> executorClass) {
         if (executorClass == null) {
             throw new IllegalArgumentException("Task executor class cannot be null");
         }
